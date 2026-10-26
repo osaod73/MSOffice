@@ -1,0 +1,253 @@
+﻿
+Option Explicit
+
+Sub SplitLargeExcelByColumnB()
+
+    Dim ws As Worksheet
+    Dim wbOut As Workbook
+    Dim wsOut As Worksheet
+
+    Dim data As Variant
+    Dim outData() As Variant
+
+    Dim groups As Object
+    Dim rows As Collection
+
+    Dim key As Variant
+    Dim i As Long, j As Long
+    Dim r As Long, c As Long
+    Dim lastRow As Long, lastCol As Long
+
+    Dim outputFolder As String
+    Dim fileName As String
+    Dim fullPath As String
+
+    Dim oldCalc As XlCalculation
+    Dim oldScreen As Boolean
+    Dim oldEvents As Boolean
+    Dim oldAlerts As Boolean
+
+    Dim totalFiles As Long
+    Dim errorMessage As String
+    Dim settingsSaved As Boolean
+
+    On Error GoTo ErrorHandler
+
+    ' تحديد ورقة البيانات
+    Set ws = ActiveSheet
+
+    ' تحديد آخر صف وآخر عمود
+    lastRow = ws.Cells(ws.Rows.Count, "B").End(xlUp).Row
+    lastCol = ws.Cells(1, ws.Columns.Count).End(xlToLeft).Column
+
+    If lastRow < 2 Or lastCol < 2 Then
+        MsgBox "No sufficient data found.", vbExclamation
+        Exit Sub
+    End If
+
+    ' إنشاء مجلد الإخراج
+    outputFolder = "C:\Excel_Split_Output"
+
+    If Dir("C:\", vbDirectory) = "" Then
+        MsgBox "Drive C is not available.", vbCritical
+        Exit Sub
+    End If
+
+    If Dir(outputFolder, vbDirectory) = "" Then
+        MkDir outputFolder
+    End If
+
+    ' حفظ إعدادات Excel
+    oldCalc = Application.Calculation
+    oldScreen = Application.ScreenUpdating
+    oldEvents = Application.EnableEvents
+    oldAlerts = Application.DisplayAlerts
+    settingsSaved = True
+
+    Application.ScreenUpdating = False
+    Application.EnableEvents = False
+    Application.DisplayAlerts = False
+    Application.Calculation = xlCalculationManual
+    Application.StatusBar = "Reading data..."
+
+    ' قراءة البيانات إلى الذاكرة
+    data = ws.Range(ws.Cells(1, 1), _
+                    ws.Cells(lastRow, lastCol)).Value2
+
+    Set groups = CreateObject("Scripting.Dictionary")
+    groups.CompareMode = vbTextCompare
+
+    ' تجميع الصفوف حسب العمود B
+    For i = 2 To UBound(data, 1)
+
+        If Not IsError(data(i, 2)) Then
+
+            If Len(Trim(CStr(data(i, 2)))) > 0 Then
+
+                key = Trim(CStr(data(i, 2)))
+
+                If Not groups.Exists(key) Then
+                    Set rows = New Collection
+                    groups.Add key, rows
+                End If
+
+                groups(key).Add i
+
+            End If
+
+        End If
+
+        If i Mod 50000 = 0 Then
+            Application.StatusBar = _
+                "Processing rows: " & Format(i / lastRow, "0%")
+            DoEvents
+        End If
+
+    Next i
+
+    totalFiles = groups.Count
+
+    If totalFiles = 0 Then
+        MsgBox "No valid values found in column B.", vbExclamation
+        GoTo CleanExit
+    End If
+
+    ' إنشاء ملف لكل مجموعة
+    j = 0
+
+    For Each key In groups.Keys
+
+        j = j + 1
+        Set rows = groups(key)
+
+        Application.StatusBar = _
+            "Creating file " & j & " of " & totalFiles
+
+        ' تجهيز مصفوفة النتائج
+        ReDim outData(1 To rows.Count + 1, 1 To lastCol)
+
+        ' نسخ العناوين
+        For c = 1 To lastCol
+            outData(1, c) = data(1, c)
+        Next c
+
+        ' نسخ صفوف المجموعة
+        For r = 1 To rows.Count
+            For c = 1 To lastCol
+                outData(r + 1, c) = data(rows(r), c)
+            Next c
+        Next r
+
+        ' إنشاء ملف جديد
+        Set wbOut = Workbooks.Add(xlWBATWorksheet)
+        Set wsOut = wbOut.Worksheets(1)
+
+        ' استخدام اسم ورقة إنجليزي صالح
+        wsOut.Name = "Data"
+
+        ' كتابة البيانات دفعة واحدة
+        wsOut.Range("A1").Resize( _
+            UBound(outData, 1), lastCol).Value2 = outData
+
+        ' إنشاء اسم ملف آمن
+        fileName = CleanSplitFileName(CStr(key))
+
+        fullPath = outputFolder & Application.PathSeparator & _
+                   fileName & ".xlsx"
+
+        ' إذا كان الملف موجودًا، استبداله
+        If Len(Dir(fullPath)) > 0 Then
+            Kill fullPath
+        End If
+
+        ' حفظ الملف
+        wbOut.SaveAs Filename:=fullPath, _
+                     FileFormat:=xlOpenXMLWorkbook
+
+        wbOut.Close SaveChanges:=False
+        Set wbOut = Nothing
+
+        Erase outData
+        Set rows = Nothing
+
+        DoEvents
+
+    Next key
+
+    GoTo CleanExit
+
+ErrorHandler:
+
+    errorMessage = "Error number: " & Err.Number & vbCrLf & _
+                   "Description: " & Err.Description
+
+CleanExit:
+
+    On Error Resume Next
+
+    If Not wbOut Is Nothing Then
+        wbOut.Close SaveChanges:=False
+    End If
+
+    If settingsSaved Then
+        Application.Calculation = oldCalc
+        Application.ScreenUpdating = oldScreen
+        Application.EnableEvents = oldEvents
+        Application.DisplayAlerts = oldAlerts
+    End If
+
+    Application.StatusBar = False
+    Application.CutCopyMode = False
+
+    On Error GoTo 0
+
+    If Len(errorMessage) > 0 Then
+
+        MsgBox "Process stopped." & vbCrLf & _
+               errorMessage & vbCrLf & _
+               "Output folder: " & outputFolder, vbCritical
+
+    ElseIf totalFiles > 0 Then
+
+        MsgBox "Completed successfully." & vbCrLf & _
+               "Files created: " & totalFiles & vbCrLf & _
+               "Output folder: " & outputFolder, vbInformation
+
+    End If
+
+End Sub
+
+
+Function CleanSplitFileName(ByVal s As String) As String
+
+    Dim invalidChars As Variant
+    Dim ch As Variant
+
+    invalidChars = Array("\", "/", ":", "*", "?", """", _
+                         "<", ">", "|")
+
+    For Each ch In invalidChars
+        s = Replace(s, ch, "_")
+    Next ch
+
+    s = Trim(s)
+
+    Do While Len(s) > 0
+
+        If Right(s, 1) = "." Or Right(s, 1) = " " Then
+            s = Left(s, Len(s) - 1)
+        Else
+            Exit Do
+        End If
+
+    Loop
+
+    If Len(s) = 0 Then s = "No_Name"
+
+    If Len(s) > 100 Then
+        s = Left(s, 100)
+    End If
+
+    CleanSplitFileName = s
+
+End Function
