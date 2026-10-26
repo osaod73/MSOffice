@@ -1,0 +1,236 @@
+﻿
+Option Explicit
+
+Sub CombineExcelFilesIntoOneWorkbook()
+
+    Dim folderPath As String
+    Dim outputPath As String
+    Dim fileName As String
+    Dim fullPath As String
+
+    Dim wbSource As Workbook
+    Dim wbOutput As Workbook
+    Dim ws As Worksheet
+
+    Dim oldAlerts As Boolean
+    Dim oldScreen As Boolean
+    Dim oldEvents As Boolean
+    Dim oldSecurity As Long
+
+    Dim fileCount As Long
+    Dim sheetCount As Long
+    Dim errorText As String
+
+    On Error GoTo ErrorHandler
+
+    ' مجلد الملفات على سطح المكتب
+    folderPath = Environ$("USERPROFILE") & _
+                 "\Desktop\Excel Files\"
+
+    ' مسار الملف النهائي
+    outputPath = Environ$("USERPROFILE") & _
+                 "\Desktop\Combined.xlsx"
+
+    ' التحقق من وجود المجلد
+    If Dir(folderPath, vbDirectory) = "" Then
+        MsgBox "لم يتم العثور على المجلد:" & vbCrLf & _
+               folderPath & vbCrLf & _
+               "تأكد من اسم المجلد ومكانه.", vbExclamation
+        Exit Sub
+    End If
+
+    ' إنشاء مصنف جديد للنتيجة
+    Set wbOutput = Workbooks.Add(xlWBATWorksheet)
+
+    oldAlerts = Application.DisplayAlerts
+    oldScreen = Application.ScreenUpdating
+    oldEvents = Application.EnableEvents
+    oldSecurity = Application.AutomationSecurity
+
+    Application.DisplayAlerts = False
+    Application.ScreenUpdating = False
+    Application.EnableEvents = False
+
+    ' تعطيل تشغيل الماكرو في الملفات المصدر
+    Application.AutomationSecurity = 3
+
+    ' البحث عن ملفات Excel
+    fileName = Dir(folderPath & "*.xls*")
+
+    Do While fileName <> ""
+
+        ' تجاهل الملفات المؤقتة
+        If Left(fileName, 2) <> "~$" Then
+
+            fullPath = folderPath & fileName
+
+            ' تجاهل ملف النتيجة إذا كان داخل مجلد المصدر
+            If StrComp(fullPath, outputPath, vbTextCompare) <> 0 Then
+
+                Set wbSource = Workbooks.Open( _
+                    Filename:=fullPath, _
+                    UpdateLinks:=0, _
+                    ReadOnly:=True, _
+                    AddToMru:=False)
+
+                ' نسخ جميع أوراق المصدر
+                For Each ws In wbSource.Worksheets
+
+                    ws.Copy After:=wbOutput.Sheets( _
+                        wbOutput.Sheets.Count)
+
+                    sheetCount = sheetCount + 1
+
+                    ' تسمية الورقة باسم مميز
+                    wbOutput.Sheets(wbOutput.Sheets.Count).Name = _
+                        GetUniqueSheetName( _
+                        wbOutput, _
+                        CleanSheetTitle( _
+                        Left(fileName, InStrRev(fileName, ".") - 1) _
+                        & "_" & ws.Name))
+
+                Next ws
+
+                wbSource.Close SaveChanges:=False
+                Set wbSource = Nothing
+
+                fileCount = fileCount + 1
+
+            End If
+
+        End If
+
+        fileName = Dir()
+
+    Loop
+
+    ' حذف الورقة الفارغة التي أنشأها Excel أولاً
+    If wbOutput.Worksheets.Count > 1 Then
+        If wbOutput.Worksheets(1).UsedRange.Count = 1 _
+           And Len(CStr(wbOutput.Worksheets(1).Range("A1").Value)) = 0 Then
+
+            wbOutput.Worksheets(1).Delete
+
+        End If
+    End If
+
+    If fileCount = 0 Then
+        wbOutput.Close SaveChanges:=False
+        Set wbOutput = Nothing
+
+        MsgBox "لم يتم العثور على ملفات Excel في المجلد.", _
+               vbExclamation
+        GoTo CleanExit
+    End If
+
+    ' حذف الملف القديم إن وجد
+    If Len(Dir(outputPath)) > 0 Then
+        Kill outputPath
+    End If
+
+    ' حفظ النتيجة بصيغة XLSX
+    wbOutput.SaveAs Filename:=outputPath, _
+                    FileFormat:=xlOpenXMLWorkbook
+
+    wbOutput.Close SaveChanges:=False
+    Set wbOutput = Nothing
+
+    GoTo CleanExit
+
+ErrorHandler:
+
+    errorText = "رقم الخطأ: " & Err.Number & vbCrLf & _
+                "التفاصيل: " & Err.Description
+
+    On Error Resume Next
+
+    If Not wbSource Is Nothing Then
+        wbSource.Close SaveChanges:=False
+    End If
+
+    If Not wbOutput Is Nothing Then
+        wbOutput.Close SaveChanges:=False
+    End If
+
+CleanExit:
+
+    On Error Resume Next
+
+    Application.DisplayAlerts = oldAlerts
+    Application.ScreenUpdating = oldScreen
+    Application.EnableEvents = oldEvents
+    Application.AutomationSecurity = oldSecurity
+    Application.CutCopyMode = False
+
+    On Error GoTo 0
+
+    If Len(errorText) > 0 Then
+
+        MsgBox "حدث خطأ أثناء التجميع:" & vbCrLf & _
+               errorText, vbCritical
+
+    ElseIf fileCount > 0 Then
+
+        MsgBox "تم تجميع الملفات بنجاح." & vbCrLf & _
+               "عدد الملفات: " & fileCount & vbCrLf & _
+               "عدد أوراق العمل المنسوخة: " & sheetCount & _
+               vbCrLf & "الملف الناتج: " & outputPath, _
+               vbInformation
+
+    End If
+
+End Sub
+
+
+Function CleanSheetTitle(ByVal s As String) As String
+
+    Dim badChars As Variant
+    Dim ch As Variant
+
+    badChars = Array(":", "\", "/", "?", "*", "[", "]")
+
+    For Each ch In badChars
+        s = Replace(s, ch, "_")
+    Next ch
+
+    s = Trim(s)
+
+    If Len(s) = 0 Then s = "Sheet"
+
+    CleanSheetTitle = Left(s, 31)
+
+End Function
+
+
+Function GetUniqueSheetName(ByVal wb As Workbook, _
+                            ByVal baseName As String) As String
+
+    Dim candidate As String
+    Dim suffix As Long
+    Dim sh As Object
+    Dim exists As Boolean
+
+    candidate = Left(baseName, 31)
+    suffix = 1
+
+    Do
+        exists = False
+
+        For Each sh In wb.Sheets
+            If StrComp(sh.Name, candidate, vbTextCompare) = 0 Then
+                exists = True
+                Exit For
+            End If
+        Next sh
+
+        If exists Then
+            suffix = suffix + 1
+            candidate = Left(baseName, 31 - Len(CStr(suffix)) - 1) _
+                        & "_" & suffix
+        End If
+
+    Loop While exists
+
+    GetUniqueSheetName = candidate
+
+End Function
