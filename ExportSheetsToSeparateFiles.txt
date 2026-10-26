@@ -1,0 +1,145 @@
+﻿
+Option Explicit
+
+Sub ExportSheetsToSeparateFiles()
+
+    Dim wbSource As Workbook
+    Dim wbNew As Workbook
+    Dim ws As Worksheet
+
+    Dim outputFolder As String
+    Dim fileName As String
+    Dim fullPath As String
+
+    Dim oldAlerts As Boolean
+    Dim oldScreen As Boolean
+    Dim oldEvents As Boolean
+
+    Dim exportedCount As Long
+    Dim errorMessage As String
+
+    On Error GoTo ErrorHandler
+
+    Set wbSource = ThisWorkbook
+
+    ' حفظ إعدادات Excel
+    oldAlerts = Application.DisplayAlerts
+    oldScreen = Application.ScreenUpdating
+    oldEvents = Application.EnableEvents
+
+    Application.DisplayAlerts = False
+    Application.ScreenUpdating = False
+    Application.EnableEvents = False
+
+    ' تحديد مجلد الإخراج داخل المستندات
+    outputFolder = Environ$("USERPROFILE") & _
+                   "\Documents\Excel_Sheets_Export"
+
+    ' إنشاء المجلد إذا لم يكن موجوداً
+    If Dir(outputFolder, vbDirectory) = "" Then
+        MkDir outputFolder
+    End If
+
+    ' فصل كل ورقة في ملف مستقل
+    For Each ws In wbSource.Worksheets
+
+        ' نسخ الورقة إلى مصنف جديد
+        ws.Copy
+
+        Set wbNew = ActiveWorkbook
+
+        ' تجهيز اسم الملف
+        fileName = CleanExportName(ws.Name)
+
+        fullPath = outputFolder & "\" & fileName & ".xlsx"
+
+        ' تجنب استبدال الملفات الموجودة
+        If Len(Dir(fullPath)) > 0 Then
+            fileName = fileName & "_" & _
+                       Format(Now, "yyyymmdd_hhnnss") & _
+                       "_" & exportedCount
+
+            fullPath = outputFolder & "\" & fileName & ".xlsx"
+        End If
+
+        ' حفظ المصنف الجديد
+        wbNew.SaveAs Filename:=fullPath, _
+                     FileFormat:=xlOpenXMLWorkbook
+
+        wbNew.Close SaveChanges:=False
+        Set wbNew = Nothing
+
+        exportedCount = exportedCount + 1
+
+    Next ws
+
+    GoTo CleanExit
+
+ErrorHandler:
+
+    errorMessage = "رقم الخطأ: " & Err.Number & vbCrLf & _
+                   "التفاصيل: " & Err.Description
+
+CleanExit:
+
+    On Error Resume Next
+
+    If Not wbNew Is Nothing Then
+        wbNew.Close SaveChanges:=False
+    End If
+
+    Application.DisplayAlerts = oldAlerts
+    Application.ScreenUpdating = oldScreen
+    Application.EnableEvents = oldEvents
+
+    On Error GoTo 0
+
+    If Len(errorMessage) > 0 Then
+
+        MsgBox "حدث خطأ أثناء التصدير:" & vbCrLf & _
+               errorMessage, vbCritical
+
+    Else
+
+        MsgBox "تم تصدير الأوراق بنجاح." & vbCrLf & _
+               "عدد الملفات: " & exportedCount & vbCrLf & _
+               "مجلد الحفظ: " & outputFolder, vbInformation
+
+    End If
+
+End Sub
+
+
+Function CleanExportName(ByVal s As String) As String
+
+    Dim badChars As Variant
+    Dim ch As Variant
+
+    badChars = Array("\", "/", ":", "*", "?", """", _
+                     "<", ">", "|")
+
+    For Each ch In badChars
+        s = Replace(s, ch, "_")
+    Next ch
+
+    s = Trim(s)
+
+    Do While Len(s) > 0
+
+        If Right(s, 1) = "." Or Right(s, 1) = " " Then
+            s = Left(s, Len(s) - 1)
+        Else
+            Exit Do
+        End If
+
+    Loop
+
+    If Len(s) = 0 Then s = "Sheet"
+
+    If Len(s) > 100 Then
+        s = Left(s, 100)
+    End If
+
+    CleanExportName = s
+
+End Function
