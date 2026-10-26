@@ -1,0 +1,204 @@
+﻿
+Option Explicit
+
+Sub SplitDataIntoSheetsByColumnB()
+
+    Dim wsSource As Worksheet
+    Dim wsTarget As Worksheet
+    Dim wb As Workbook
+    Dim data As Variant
+    Dim outputData() As Variant
+    Dim groups As Object
+    Dim rows As Collection
+    Dim sheetMap As Object
+
+    Dim key As Variant
+    Dim i As Long, r As Long, c As Long
+    Dim lastRow As Long, lastCol As Long
+    Dim sheetName As String
+    Dim baseName As String
+    Dim newName As String
+    Dim suffix As Long
+    Dim total As Long
+    Dim oldScreen As Boolean
+    Dim oldEvents As Boolean
+    Dim oldCalc As XlCalculation
+    Dim settingsSaved As Boolean
+    Dim errorText As String
+
+    On Error GoTo ErrorHandler
+
+    Set wb = ThisWorkbook
+    Set wsSource = ActiveSheet
+
+    lastRow = wsSource.Cells(wsSource.Rows.Count, "B").End(xlUp).Row
+    lastCol = wsSource.Cells(1, wsSource.Columns.Count).End(xlToLeft).Column
+
+    If lastRow < 2 Or lastCol < 2 Then
+        MsgBox "لا توجد بيانات كافية للتقسيم.", vbExclamation
+        Exit Sub
+    End If
+
+    oldScreen = Application.ScreenUpdating
+    oldEvents = Application.EnableEvents
+    oldCalc = Application.Calculation
+    settingsSaved = True
+
+    Application.ScreenUpdating = False
+    Application.EnableEvents = False
+    Application.Calculation = xlCalculationManual
+
+    ' قراءة الجدول إلى الذاكرة
+    data = wsSource.Range( _
+        wsSource.Cells(1, 1), _
+        wsSource.Cells(lastRow, lastCol)).Value2
+
+    Set groups = CreateObject("Scripting.Dictionary")
+    groups.CompareMode = vbTextCompare
+
+    Set sheetMap = CreateObject("Scripting.Dictionary")
+    sheetMap.CompareMode = vbTextCompare
+
+    ' تجميع أرقام الصفوف حسب العمود B
+    For i = 2 To UBound(data, 1)
+
+        If Not IsError(data(i, 2)) Then
+
+            If Len(Trim(CStr(data(i, 2)))) > 0 Then
+
+                key = Trim(CStr(data(i, 2)))
+
+                If Not groups.Exists(key) Then
+                    Set rows = New Collection
+                    groups.Add key, rows
+                End If
+
+                groups(key).Add i
+
+            End If
+
+        End If
+
+    Next i
+
+    total = groups.Count
+
+    If total = 0 Then
+        MsgBox "لا توجد قيم صالحة في العمود B.", vbExclamation
+        GoTo CleanExit
+    End If
+
+    ' إنشاء ورقة لكل مجموعة
+    For Each key In groups.Keys
+
+        Set rows = groups(key)
+
+        ' اسم ورقة صالح ومميز
+        baseName = CleanSheetName(CStr(key))
+        newName = Left(baseName, 31)
+        suffix = 1
+
+        Do While SheetExists(wb, newName)
+            suffix = suffix + 1
+            newName = Left(baseName, 31 - Len(CStr(suffix)) - 1) _
+                      & "_" & suffix
+        Loop
+
+        Set wsTarget = wb.Worksheets.Add( _
+            After:=wb.Worksheets(wb.Worksheets.Count))
+
+        wsTarget.Name = newName
+        sheetMap.Add CStr(key), newName
+
+        ' تجهيز البيانات مع العناوين
+        ReDim outputData(1 To rows.Count + 1, 1 To lastCol)
+
+        For c = 1 To lastCol
+            outputData(1, c) = data(1, c)
+        Next c
+
+        For r = 1 To rows.Count
+            For c = 1 To lastCol
+                outputData(r + 1, c) = data(rows(r), c)
+            Next c
+        Next r
+
+        ' كتابة البيانات دفعة واحدة
+        wsTarget.Range("A1").Resize( _
+            UBound(outputData, 1), lastCol).Value2 = outputData
+
+        ' نسخ عرض الأعمدة
+        For c = 1 To lastCol
+            wsTarget.Columns(c).ColumnWidth = _
+                wsSource.Columns(c).ColumnWidth
+        Next c
+
+        ' تنسيق صف العناوين
+        wsTarget.Rows(1).Font.Bold = True
+
+        Erase outputData
+        Set rows = Nothing
+
+    Next key
+
+    MsgBox "تم التقسيم بنجاح." & vbCrLf & _
+           "عدد أوراق العمل الجديدة: " & total, vbInformation
+
+    GoTo CleanExit
+
+ErrorHandler:
+
+    errorText = "رقم الخطأ: " & Err.Number & vbCrLf & _
+                "التفاصيل: " & Err.Description
+
+CleanExit:
+
+    On Error Resume Next
+
+    If settingsSaved Then
+        Application.ScreenUpdating = oldScreen
+        Application.EnableEvents = oldEvents
+        Application.Calculation = oldCalc
+    End If
+
+    On Error GoTo 0
+
+    If Len(errorText) > 0 Then
+        MsgBox errorText, vbCritical
+    End If
+
+End Sub
+
+
+Function CleanSheetName(ByVal s As String) As String
+
+    Dim badChars As Variant
+    Dim ch As Variant
+
+    badChars = Array(":", "\", "/", "?", "*", "[", "]")
+
+    For Each ch In badChars
+        s = Replace(s, ch, "_")
+    Next ch
+
+    s = Trim(s)
+
+    If Len(s) = 0 Then s = "Data"
+
+    CleanSheetName = Left(s, 31)
+
+End Function
+
+
+Function SheetExists(ByVal wb As Workbook, _
+                     ByVal sheetName As String) As Boolean
+
+    Dim sh As Object
+
+    On Error Resume Next
+    Set sh = wb.Sheets(sheetName)
+    SheetExists = Not sh Is Nothing
+    Set sh = Nothing
+    On Error GoTo 0
+
+End Function
